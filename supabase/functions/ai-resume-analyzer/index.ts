@@ -218,9 +218,9 @@ async function extractPdfText(fileData: Blob): Promise<string> {
         const tjMatches = match.match(/\((.*?)\)\s*Tj/g);
         if (tjMatches) {
           for (const tj of tjMatches) {
-            const text = tj.match(/\((.*?)\)/);
-            if (text) {
-              text += text[1] + " ";
+            const m = tj.match(/\((.*?)\)/);
+            if (m) {
+              text += m[1] + " ";
             }
           }
         }

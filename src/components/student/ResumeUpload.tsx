@@ -105,10 +105,9 @@ export function ResumeUpload({ onSkillsExtracted, onAnalysisComplete }: ResumeUp
     } else {
       setSynced(true);
       onAnalysisComplete?.();
+      setExtraction(null);
+      setFileName('');
     }
-
-    setExtraction(null);
-    setFileName('');
   };
 
   return (

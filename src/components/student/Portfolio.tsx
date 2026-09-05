@@ -207,7 +207,21 @@ export function Portfolio() {
             </div>
             {showResumeUpload ? (
               <ResumeUpload
-                onSkillsExtracted={() => {}}
+                onSkillsExtracted={async (newSkills) => {
+                  if (!profile || !skills) return;
+                  const existing = new Set(skills.skills.map((s) => s.skill.toLowerCase()));
+                  const toAdd = newSkills.filter((s) => !existing.has(s.skill.toLowerCase()));
+                  if (toAdd.length === 0) return;
+                  const mergedSkills = [...skills.skills, ...toAdd];
+                  const mergedGaps = mergedSkills.filter((s) => s.score < 50).map((s) => s.skill);
+                  const mergedTotal = Math.round(mergedSkills.reduce((sum, s) => sum + s.score, 0) / mergedSkills.length);
+                  const { data: existingRow } = await supabase.from('student_skills').select('id').eq('student_id', profile.id).maybeSingle();
+                  if (existingRow) {
+                    await supabase.from('student_skills').update({ skills: mergedSkills, gaps: mergedGaps, total_score: mergedTotal, updated_at: new Date().toISOString() }).eq('student_id', profile.id);
+                  } else {
+                    await supabase.from('student_skills').insert({ student_id: profile.id, skills: mergedSkills, gaps: mergedGaps, total_score: mergedTotal });
+                  }
+                }}
                 onAnalysisComplete={() => { setShowResumeUpload(false); loadData(); }}
               />
             ) : resumeData ? (
