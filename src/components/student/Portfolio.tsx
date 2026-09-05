@@ -1,19 +1,27 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import type { StudentSkills, ApplicationWithDetails, StatusHistory, InterviewSlot, VerifiedSkill } from '@/types';
+import type { StudentSkills, ApplicationWithDetails, StatusHistory, InterviewSlot, VerifiedSkill, AISkillProfileEntry, ResumeExtraction } from '@/types';
 import { VerifiedSkillBadge } from '@/components/student/VerifiedSkillBadge';
+import { fetchAISkillProfile, fetchLatestResumeAnalysis, buildSkillVerificationSummary, type SkillVerificationSummary } from '@/lib/aiSkills';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer,
   Tooltip,
 } from 'recharts';
-import { TrendingUp, AlertTriangle, Clock, CheckCircle2, XCircle, FileText, Calendar, Video } from 'lucide-react';
+import { TrendingUp, TriangleAlert as AlertTriangle, Clock, CircleCheck as CheckCircle2, Circle as XCircle, FileText, Calendar, Video, Brain, ShieldCheck, BadgeCheck, Upload } from 'lucide-react';
+import { ResumeUpload } from '@/components/student/ResumeUpload';
 
 const statusConfig = {
   applied: { label: 'Applied', color: 'bg-blue-50 text-blue-700 border-blue-200', icon: <Clock className="w-3.5 h-3.5" /> },
   shortlisted: { label: 'Shortlisted', color: 'bg-amber-50 text-amber-700 border-amber-200', icon: <TrendingUp className="w-3.5 h-3.5" /> },
   selected: { label: 'Selected', color: 'bg-green-50 text-green-700 border-green-200', icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
   rejected: { label: 'Rejected', color: 'bg-red-50 text-red-700 border-red-200', icon: <XCircle className="w-3.5 h-3.5" /> },
+};
+
+const verificationConfig = {
+  verified: { label: 'Verified', color: 'text-green-700 bg-green-100', icon: <ShieldCheck className="w-3 h-3" /> },
+  assessed: { label: 'Assessed', color: 'text-blue-700 bg-blue-100', icon: <BadgeCheck className="w-3 h-3" /> },
+  claimed: { label: 'Claimed', color: 'text-slate-500 bg-slate-100', icon: <FileText className="w-3 h-3" /> },
 };
 
 export function Portfolio() {
@@ -23,60 +31,82 @@ export function Portfolio() {
   const [history, setHistory] = useState<Record<string, StatusHistory[]>>({});
   const [interviewSlots, setInterviewSlots] = useState<Record<string, InterviewSlot[]>>({});
   const [verifiedSkills, setVerifiedSkills] = useState<VerifiedSkill[]>([]);
+  const [aiSkillProfile, setAiSkillProfile] = useState<AISkillProfileEntry[]>([]);
+  const [verificationSummary, setVerificationSummary] = useState<SkillVerificationSummary[]>([]);
+  const [resumeData, setResumeData] = useState<ResumeExtraction | null>(null);
+  const [showResumeUpload, setShowResumeUpload] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  const loadData = async () => {
+    if (!profile) return;
+    const { data: skillsData } = await supabase
+      .from('student_skills')
+      .select('*')
+      .eq('student_id', profile.id)
+      .maybeSingle();
+    setSkills(skillsData as StudentSkills | null);
+
+    const { data: appsData } = await supabase
+      .from('applications')
+      .select(`*, internship:internships(*)`)
+      .eq('student_id', profile.id)
+      .order('created_at', { ascending: false });
+    setApplications((appsData as ApplicationWithDetails[]) ?? []);
+
+    const { data: verifiedData } = await supabase
+      .from('verified_skills')
+      .select('*')
+      .eq('student_id', profile.id);
+    setVerifiedSkills((verifiedData as VerifiedSkill[]) ?? []);
+
+    if (appsData && appsData.length > 0) {
+      const appIds = appsData.map((a) => a.id);
+      const [{ data: histData }, { data: slotData }] = await Promise.all([
+        supabase.from('application_status_history').select('*').in('application_id', appIds).order('created_at', { ascending: true }),
+        supabase.from('interview_slots').select('*').in('application_id', appIds).order('scheduled_time', { ascending: true }),
+      ]);
+      const histMap: Record<string, StatusHistory[]> = {};
+      (histData ?? []).forEach((h) => {
+        if (!histMap[h.application_id]) histMap[h.application_id] = [];
+        histMap[h.application_id].push(h as StatusHistory);
+      });
+      setHistory(histMap);
+
+      const slotMap: Record<string, InterviewSlot[]> = {};
+      (slotData ?? []).forEach((s) => {
+        if (!slotMap[s.application_id]) slotMap[s.application_id] = [];
+        slotMap[s.application_id].push(s as InterviewSlot);
+      });
+      setInterviewSlots(slotMap);
+    }
+
+    const [aiProfile, resume] = await Promise.all([
+      fetchAISkillProfile(profile.id),
+      fetchLatestResumeAnalysis(profile.id),
+    ]);
+    setAiSkillProfile(aiProfile);
+    setResumeData(resume);
+
+    if (skillsData && aiProfile) {
+      const summary = buildSkillVerificationSummary(
+        aiProfile,
+        verifiedData as VerifiedSkill[] ?? [],
+        (skillsData as StudentSkills).skills
+      );
+      setVerificationSummary(summary);
+    }
+
+    setLoading(false);
+  };
 
   useEffect(() => {
     if (!profile) return;
-    (async () => {
-      const { data: skillsData } = await supabase
-        .from('student_skills')
-        .select('*')
-        .eq('student_id', profile.id)
-        .maybeSingle();
-      setSkills(skillsData as StudentSkills | null);
-
-      const { data: appsData } = await supabase
-        .from('applications')
-        .select(`*, internship:internships(*)`)
-        .eq('student_id', profile.id)
-        .order('created_at', { ascending: false });
-      setApplications((appsData as ApplicationWithDetails[]) ?? []);
-
-      const { data: verifiedData } = await supabase
-        .from('verified_skills')
-        .select('*')
-        .eq('student_id', profile.id);
-      setVerifiedSkills((verifiedData as VerifiedSkill[]) ?? []);
-
-      if (appsData && appsData.length > 0) {
-        const appIds = appsData.map((a) => a.id);
-        const [{ data: histData }, { data: slotData }] = await Promise.all([
-          supabase.from('application_status_history').select('*').in('application_id', appIds).order('created_at', { ascending: true }),
-          supabase.from('interview_slots').select('*').in('application_id', appIds).order('scheduled_time', { ascending: true }),
-        ]);
-        const histMap: Record<string, StatusHistory[]> = {};
-        (histData ?? []).forEach((h) => {
-          if (!histMap[h.application_id]) histMap[h.application_id] = [];
-          histMap[h.application_id].push(h as StatusHistory);
-        });
-        setHistory(histMap);
-
-        const slotMap: Record<string, InterviewSlot[]> = {};
-        (slotData ?? []).forEach((s) => {
-          if (!slotMap[s.application_id]) slotMap[s.application_id] = [];
-          slotMap[s.application_id].push(s as InterviewSlot);
-        });
-        setInterviewSlots(slotMap);
-      }
-
-      setLoading(false);
-    })();
+    loadData();
   }, [profile]);
 
   const handleSelectSlot = async (slotId: string, appId: string) => {
     await supabase.from('interview_slots').update({ selected: true }).eq('id', slotId);
     await supabase.from('interview_slots').update({ selected: false }).neq('id', slotId).eq('application_id', appId);
-    // Refresh slots
     const { data: slotData } = await supabase.from('interview_slots').select('*').eq('application_id', appId).order('scheduled_time', { ascending: true });
     setInterviewSlots((prev) => ({ ...prev, [appId]: (slotData as InterviewSlot[]) ?? [] }));
   };
@@ -117,11 +147,87 @@ export function Portfolio() {
             )}
           </div>
 
+          {/* AI Skill Verification Section */}
+          {verificationSummary.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <Brain className="w-5 h-5 text-indigo-600" />
+                <h2 className="text-lg font-semibold text-slate-900">AI Skill Verification</h2>
+              </div>
+              <p className="text-xs text-slate-500 mb-4">
+                Comparing resume claims, assessment results, and verified evidence
+              </p>
+              <div className="space-y-2.5">
+                {verificationSummary.slice(0, 12).map((vs) => {
+                  const vc = verificationConfig[vs.status];
+                  return (
+                    <div key={vs.skill} className="p-3 rounded-lg border border-slate-100 bg-slate-50/50">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-medium text-slate-800">{vs.skill}</span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${vc.color}`}>
+                          {vc.icon} {vc.label}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-slate-500">
+                        <span className="font-medium text-slate-700">{vs.finalScore}/100</span>
+                        <span>Confidence: {vs.confidence}%</span>
+                        <span className="capitalize">{vs.source.replace('+', ' + ')}</span>
+                      </div>
+                      {vs.claimedScore !== null && vs.assessedScore !== null && vs.claimedScore !== vs.assessedScore && (
+                        <div className="mt-1 text-xs text-amber-600">
+                          Claimed: {vs.claimedScore} → Assessed: {vs.assessedScore}
+                        </div>
+                      )}
+                      <div className="mt-1.5 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${vs.finalScore >= 70 ? 'bg-green-500' : vs.finalScore >= 50 ? 'bg-amber-400' : 'bg-red-400'}`}
+                          style={{ width: `${vs.finalScore}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Resume Upload Section */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-600" />
+                <h2 className="text-lg font-semibold text-slate-900">Resume</h2>
+              </div>
+              <button
+                onClick={() => setShowResumeUpload(!showResumeUpload)}
+                className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+              >
+                <Upload className="w-3.5 h-3.5" /> {resumeData ? 'Update' : 'Upload'}
+              </button>
+            </div>
+            {showResumeUpload ? (
+              <ResumeUpload
+                onSkillsExtracted={() => {}}
+                onAnalysisComplete={() => { setShowResumeUpload(false); loadData(); }}
+              />
+            ) : resumeData ? (
+              <div className="space-y-2">
+                {resumeData.name && <p className="text-sm text-slate-700">{resumeData.name}</p>}
+                {resumeData.degree && <p className="text-xs text-slate-500">{resumeData.degree}{resumeData.specialization ? `, ${resumeData.specialization}` : ''}</p>}
+                {resumeData.projects.length > 0 && <p className="text-xs text-slate-500">{resumeData.projects.length} projects · {resumeData.certifications.length} certifications</p>}
+                <p className="text-xs text-slate-400">{resumeData.technical_skills.length + resumeData.programming_languages.length} skills extracted</p>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">Upload your resume for AI-powered skill extraction and analysis.</p>
+            )}
+          </div>
+
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
             <h2 className="text-lg font-semibold text-slate-900 mb-3">Skill Details</h2>
             <div className="space-y-2.5">
               {skills?.skills.map((s) => {
                 const verified = verifiedSkills.find((v) => v.skill.toLowerCase() === s.skill.toLowerCase());
+                const aiEntry = aiSkillProfile.find((a) => a.skill.toLowerCase() === s.skill.toLowerCase());
                 return (
                   <div key={s.skill}>
                     <div className="flex items-center justify-between mb-1">
@@ -130,6 +236,11 @@ export function Portfolio() {
                         {verified && (
                           <span className="inline-flex items-center gap-0.5 text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded" title={`Verified: ${verified.verified_score}/100`}>
                             <CheckCircle2 className="w-3 h-3" /> Verified
+                          </span>
+                        )}
+                        {!verified && aiEntry && aiEntry.verification_status === 'assessed' && (
+                          <span className="inline-flex items-center gap-0.5 text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded" title={`AI Assessed: ${aiEntry.score}/100`}>
+                            <BadgeCheck className="w-3 h-3" /> Assessed
                           </span>
                         )}
                       </span>
@@ -146,7 +257,6 @@ export function Portfolio() {
               })}
             </div>
 
-            {/* Verified skills section */}
             <div className="mt-5 pt-4 border-t border-slate-100">
               <h3 className="text-sm font-medium text-slate-700 mb-2">Verified Skill Badges</h3>
               <div className="flex flex-wrap gap-2">
@@ -216,7 +326,6 @@ export function Portfolio() {
                         </div>
                       </div>
 
-                      {/* Required skills */}
                       <div className="flex flex-wrap gap-1 mb-3">
                         {app.internship?.required_skills.map((skill) => {
                           const hasSkill = skills?.skills.some((s) => s.skill.toLowerCase() === skill.toLowerCase());
@@ -230,7 +339,6 @@ export function Portfolio() {
                         })}
                       </div>
 
-                      {/* Interview slots */}
                       {slots.length > 0 && (
                         <div className="mt-3 pt-3 border-t border-slate-100">
                           <div className="flex items-center gap-2 mb-2">
@@ -266,7 +374,6 @@ export function Portfolio() {
                         </div>
                       )}
 
-                      {/* Status history timeline */}
                       {hist.length > 0 && (
                         <div className="mt-3 pt-3 border-t border-slate-100">
                           <p className="text-xs font-medium text-slate-400 mb-2">Status History</p>
@@ -281,7 +388,7 @@ export function Portfolio() {
                                   <span className="text-xs text-slate-400">
                                     {new Date(h.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
                                   </span>
-                                  {idx < hist.length - 1 && <span className="text-slate-300">→</span>}
+                                  {idx < hist.length - 1 && <span className="text-slate-300">&rarr;</span>}
                                 </div>
                               );
                             })}

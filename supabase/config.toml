@@ -1,0 +1,5 @@
+[functions.ai-resume-analyzer]
+verify_jwt = true
+
+[functions.ai-assessment-generator]
+verify_jwt = true

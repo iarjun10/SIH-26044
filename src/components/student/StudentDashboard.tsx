@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import type { StudentSkills, Internship, Application } from '@/types';
+import type { StudentSkills, Internship, Application, AISkillProfileEntry, ResumeExtraction } from '@/types';
+import { fetchAISkillProfile, fetchLatestResumeAnalysis } from '@/lib/aiSkills';
 import { rankInternshipsByMatch } from '@/lib/match';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
-import { TrendingUp, AlertTriangle, Target, Award, ArrowRight } from 'lucide-react';
+import { TrendingUp, TriangleAlert as AlertTriangle, Target, Award, ArrowRight, Brain, BadgeCheck, FileText, ShieldCheck, CircleCheck as CheckCircle2 } from 'lucide-react';
 
 interface StudentDashboardProps {
   onNavigate: (page: string) => void;
@@ -18,6 +19,8 @@ export function StudentDashboard({ onNavigate }: StudentDashboardProps) {
   const [skills, setSkills] = useState<StudentSkills | null>(null);
   const [internships, setInternships] = useState<Internship[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
+  const [aiSkillProfile, setAiSkillProfile] = useState<AISkillProfileEntry[]>([]);
+  const [resumeData, setResumeData] = useState<ResumeExtraction | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -31,6 +34,14 @@ export function StudentDashboard({ onNavigate }: StudentDashboardProps) {
       setSkills(skillsData as StudentSkills | null);
       setInternships(internshipsData ?? []);
       setApplications(appsData ?? []);
+
+      const [aiProfile, resume] = await Promise.all([
+        fetchAISkillProfile(profile.id),
+        fetchLatestResumeAnalysis(profile.id),
+      ]);
+      setAiSkillProfile(aiProfile);
+      setResumeData(resume);
+
       setLoading(false);
     })();
   }, [profile]);
@@ -122,6 +133,63 @@ export function StudentDashboard({ onNavigate }: StudentDashboardProps) {
         </div>
       </div>
 
+      {/* AI Skill Profile Section */}
+      {aiSkillProfile.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-8">
+          <div className="flex items-center gap-2 mb-1">
+            <Brain className="w-5 h-5 text-indigo-600" />
+            <h2 className="text-lg font-semibold text-slate-900">AI Skill Profile</h2>
+          </div>
+          <p className="text-sm text-slate-500 mb-4">
+            Skills extracted from your resume and verified through AI assessments
+            {resumeData && <span className="ml-1 text-xs text-slate-400">— last resume: {resumeData.name || 'analyzed'}</span>}
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {aiSkillProfile.slice(0, 9).map((entry) => {
+              const statusColor = entry.verification_status === 'verified'
+                ? 'border-green-200 bg-green-50/50'
+                : entry.verification_status === 'assessed'
+                  ? 'border-blue-200 bg-blue-50/50'
+                  : 'border-slate-200 bg-slate-50/50';
+              const statusBadge = entry.verification_status === 'verified'
+                ? { text: 'Verified', color: 'text-green-700 bg-green-100', icon: <ShieldCheck className="w-3 h-3" /> }
+                : entry.verification_status === 'assessed'
+                  ? { text: 'Assessed', color: 'text-blue-700 bg-blue-100', icon: <BadgeCheck className="w-3 h-3" /> }
+                  : { text: 'Claimed', color: 'text-slate-500 bg-slate-100', icon: <FileText className="w-3 h-3" /> };
+              return (
+                <div key={entry.id} className={`rounded-xl border p-3 ${statusColor}`}>
+                  <div className="flex items-start justify-between mb-1">
+                    <span className="text-sm font-medium text-slate-800">{entry.skill}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${statusBadge.color}`}>
+                      {statusBadge.icon} {statusBadge.text}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                    <span>{entry.proficiency_level}</span>
+                    <span className="font-medium text-slate-700">{entry.score}/100</span>
+                  </div>
+                  <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden mb-1.5">
+                    <div
+                      className={`h-full rounded-full ${entry.score >= 70 ? 'bg-green-500' : entry.score >= 50 ? 'bg-amber-400' : 'bg-red-400'}`}
+                      style={{ width: `${entry.score}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-400">
+                    <span>Confidence: {entry.confidence}%</span>
+                    <span className="capitalize">{entry.source.replace('+', ' + ')}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {aiSkillProfile.length > 9 && (
+            <button onClick={() => onNavigate('portfolio')} className="mt-3 text-sm font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1">
+              View all {aiSkillProfile.length} skills <ArrowRight className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         {/* Radar Chart */}
         <div className="bg-white rounded-2xl border border-slate-200 p-6">
@@ -164,7 +232,7 @@ export function StudentDashboard({ onNavigate }: StudentDashboardProps) {
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <CheckCircle className="w-12 h-12 text-green-500 mb-3" />
+              <CheckCircle2 className="w-12 h-12 text-green-500 mb-3" />
               <p className="text-sm text-slate-500">No skill gaps detected. Great job!</p>
             </div>
           )}
@@ -224,13 +292,5 @@ export function StudentDashboard({ onNavigate }: StudentDashboardProps) {
         </div>
       </div>
     </div>
-  );
-}
-
-function CheckCircle({ className }: { className: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
   );
 }

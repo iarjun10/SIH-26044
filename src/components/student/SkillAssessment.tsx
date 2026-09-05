@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { assessmentQuestions, computeSkillProfile } from '@/data/assessment';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { ChevronLeft, ChevronRight, CheckCircle2, Loader2, FileText } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, Loader2, FileText, Brain } from 'lucide-react';
 import type { SkillEntry } from '@/types';
 import { ResumeUpload } from '@/components/student/ResumeUpload';
 import { VerifiedSkillBadge } from '@/components/student/VerifiedSkillBadge';
+import { AIAssessmentPanel } from '@/components/student/AIAssessmentPanel';
 import type { VerifiedSkill } from '@/types';
 
 interface SkillAssessmentProps {
@@ -22,6 +23,8 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
   const [verifiedSkills, setVerifiedSkills] = useState<VerifiedSkill[]>([]);
   const [showResume, setShowResume] = useState(false);
   const [showVerified, setShowVerified] = useState(false);
+  const [showAI, setShowAI] = useState(false);
+  const [assessmentCompleted, setAssessmentCompleted] = useState(false);
 
   const question = assessmentQuestions[currentQ];
   const totalQuestions = assessmentQuestions.length;
@@ -48,7 +51,6 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
 
     const { skills } = computeSkillProfile(answers);
 
-    // Merge resume-extracted skills that aren't already in the assessment
     for (const rs of resumeSkills) {
       if (!skills.some((s) => s.skill.toLowerCase() === rs.skill.toLowerCase())) {
         skills.push(rs);
@@ -87,7 +89,7 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
     }
 
     setSubmitting(false);
-    if (!error) onComplete();
+    if (!error) setAssessmentCompleted(true);
   };
 
   const fetchVerifiedSkills = async () => {
@@ -99,22 +101,32 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
     setVerifiedSkills((data as VerifiedSkill[]) ?? []);
   };
 
+  const currentSkills = [
+    ...computeSkillProfile(answers).skills,
+    ...resumeSkills.filter((rs) => !assessmentQuestions.some((q) => q.skill.toLowerCase() === rs.skill.toLowerCase())),
+  ];
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900 mb-1">Skill Assessment</h1>
         <p className="text-slate-500 text-sm">
-          Answer {totalQuestions} questions to build your skill profile. This helps us match you with the best internships.
+          Answer {totalQuestions} questions to build your skill profile, or take an AI-powered assessment for any skill.
         </p>
       </div>
 
-      {/* Resume upload + Verified skills toggles */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex flex-wrap gap-2 mb-6">
         <button
           onClick={() => setShowResume(!showResume)}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${showResume ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
         >
           <FileText className="w-4 h-4" /> Upload Resume
+        </button>
+        <button
+          onClick={() => setShowAI(!showAI)}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${showAI ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+        >
+          <Brain className="w-4 h-4" /> AI Assessment
         </button>
         <button
           onClick={() => { setShowVerified(!showVerified); fetchVerifiedSkills(); }}
@@ -141,6 +153,15 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
         </div>
       )}
 
+      {showAI && (
+        <div className="mb-6">
+          <AIAssessmentPanel
+            skills={currentSkills.length > 0 ? currentSkills : assessmentQuestions.map((q) => ({ skill: q.skill, score: 0 }))}
+            onComplete={() => { setShowAI(false); }}
+          />
+        </div>
+      )}
+
       {showVerified && (
         <div className="mb-6 bg-white border border-slate-200 rounded-xl p-5">
           <h3 className="text-sm font-semibold text-slate-900 mb-2">Verify Your Skills</h3>
@@ -158,88 +179,106 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
         </div>
       )}
 
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-slate-600">
-            Question {currentQ + 1} of {totalQuestions}
-          </span>
-          <span className="text-sm text-slate-400">{Math.round(progress)}%</span>
-        </div>
-        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-blue-600 rounded-full transition-all duration-300"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
-        <div className="mb-6">
-          <span className="inline-block px-3 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full mb-3">
-            {question.skill}
-          </span>
-          <h2 className="text-lg font-semibold text-slate-900">{question.question}</h2>
-        </div>
-
-        <div className="space-y-2.5">
-          {question.options.map((option) => {
-            const selected = answers[question.id] === option.score;
-            return (
-              <button
-                key={option.label}
-                onClick={() => handleSelect(option.score)}
-                className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
-                  selected
-                    ? 'border-blue-600 bg-blue-50'
-                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className={`text-sm font-medium ${selected ? 'text-blue-700' : 'text-slate-700'}`}>
-                    {option.label}
-                  </span>
-                  {selected && <CheckCircle2 className="w-5 h-5 text-blue-600" />}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {error && (
-          <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-600">
-            {error}
+      {assessmentCompleted ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
+          <CheckCircle2 className="w-14 h-14 text-green-500 mx-auto mb-3" />
+          <h2 className="text-lg font-bold text-slate-900 mb-2">Assessment Submitted!</h2>
+          <p className="text-sm text-slate-500 mb-6">Your skill profile has been updated. Take an AI assessment for more personalized evaluation.</p>
+          <div className="flex gap-3 justify-center">
+            <button onClick={() => setShowAI(true)} className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg text-sm transition-colors flex items-center gap-2">
+              <Brain className="w-4 h-4" /> Take AI Assessment
+            </button>
+            <button onClick={onComplete} className="px-5 py-2.5 border border-slate-200 text-slate-700 font-medium rounded-lg text-sm hover:bg-slate-50 transition-colors">
+              Go to Dashboard
+            </button>
           </div>
-        )}
-
-        <div className="flex items-center justify-between mt-6 pt-5 border-t border-slate-100">
-          <button
-            onClick={handlePrev}
-            disabled={currentQ === 0}
-            className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" /> Previous
-          </button>
-
-          {isLast ? (
-            <button
-              onClick={handleSubmit}
-              disabled={!allAnswered || submitting}
-              className="flex items-center gap-2 px-6 py-2 bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              {submitting ? 'Submitting...' : 'Submit Assessment'}
-            </button>
-          ) : (
-            <button
-              onClick={handleNext}
-              disabled={answers[question.id] === undefined}
-              className="flex items-center gap-1 px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Next <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-slate-600">
+                Question {currentQ + 1} of {totalQuestions}
+              </span>
+              <span className="text-sm text-slate-400">{Math.round(progress)}%</span>
+            </div>
+            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
+            <div className="mb-6">
+              <span className="inline-block px-3 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full mb-3">
+                {question.skill}
+              </span>
+              <h2 className="text-lg font-semibold text-slate-900">{question.question}</h2>
+            </div>
+
+            <div className="space-y-2.5">
+              {question.options.map((option) => {
+                const selected = answers[question.id] === option.score;
+                return (
+                  <button
+                    key={option.label}
+                    onClick={() => handleSelect(option.score)}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
+                      selected
+                        ? 'border-blue-600 bg-blue-50'
+                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={`text-sm font-medium ${selected ? 'text-blue-700' : 'text-slate-700'}`}>
+                        {option.label}
+                      </span>
+                      {selected && <CheckCircle2 className="w-5 h-5 text-blue-600" />}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {error && (
+              <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-600">
+                {error}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between mt-6 pt-5 border-t border-slate-100">
+              <button
+                onClick={handlePrev}
+                disabled={currentQ === 0}
+                className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" /> Previous
+              </button>
+
+              {isLast ? (
+                <button
+                  onClick={handleSubmit}
+                  disabled={!allAnswered || submitting}
+                  className="flex items-center gap-2 px-6 py-2 bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  {submitting ? 'Submitting...' : 'Submit Assessment'}
+                </button>
+              ) : (
+                <button
+                  onClick={handleNext}
+                  disabled={answers[question.id] === undefined}
+                  className="flex items-center gap-1 px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next <ChevronRight className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
