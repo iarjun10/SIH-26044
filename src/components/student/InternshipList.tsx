@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import type { StudentSkills, Internship, Application, Bookmark } from '@/types';
+import type { StudentSkills, Internship, Application } from '@/types';
+type BookmarkType = { id: string; student_id: string; internship_id: string; created_at: string };
 import { rankInternshipsByMatch } from '@/lib/match';
 import { parseStipend, parseDurationMonths } from '@/lib/notifications';
 import { Search, MapPin, Clock, IndianRupee, Check, Loader2, AlertCircle, Bookmark, BookmarkCheck, Filter, X } from 'lucide-react';
@@ -35,7 +36,7 @@ export function InternshipList() {
       setSkills(skillsData as StudentSkills | null);
       setInternships(internshipsData ?? []);
       setApplications(appsData ?? []);
-      setBookmarks(new Set((bookmarkData as Bookmark[])?.map((b) => b.internship_id) ?? []));
+      setBookmarks(new Set((bookmarkData as BookmarkType[])?.map((b) => b.internship_id) ?? []));
       setLoading(false);
     })();
   }, [profile]);

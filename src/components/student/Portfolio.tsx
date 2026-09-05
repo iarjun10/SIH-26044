@@ -7,7 +7,7 @@ import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer,
   Tooltip,
 } from 'recharts';
-import { Award, TrendingUp, AlertTriangle, Clock, CheckCircle2, XCircle, FileText, Calendar, MapPin, Video } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Clock, CheckCircle2, XCircle, FileText, Calendar, Video } from 'lucide-react';
 
 const statusConfig = {
   applied: { label: 'Applied', color: 'bg-blue-50 text-blue-700 border-blue-200', icon: <Clock className="w-3.5 h-3.5" /> },

@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import type { SkillEntry } from '@/types';
-import { Upload, FileText, Loader2, Check, X, Sparkles } from 'lucide-react';
+import { Upload, Loader2, Check, X, Sparkles } from 'lucide-react';
 
 interface ResumeUploadProps {
   onSkillsExtracted: (skills: SkillEntry[]) => void;

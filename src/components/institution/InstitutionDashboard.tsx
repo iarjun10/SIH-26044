@@ -1,13 +1,12 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/context/AuthContext';
 import { createNotification } from '@/lib/notifications';
 import type { StudentSkills, Internship, Application, Profile, IndustryFeedback, SkillRating } from '@/types';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, FunnelChart, Funnel, LabelList,
 } from 'recharts';
-import { GraduationCap, Building2, Briefcase, Users, CheckCircle2, XCircle, Clock, Upload, FileSpreadsheet, Star, Target, ShieldCheck } from 'lucide-react';
+import { GraduationCap, Building2, Briefcase, Users, CheckCircle2, XCircle, Clock, Upload, FileSpreadsheet, Target, ShieldCheck } from 'lucide-react';
 
 const STATUS_COLORS: Record<string, string> = {
   applied: '#3b82f6',
@@ -19,7 +18,6 @@ const STATUS_COLORS: Record<string, string> = {
 type Tab = 'analytics' | 'approvals' | 'import';
 
 export function InstitutionDashboard() {
-  const { profile } = useAuth();
   const [tab, setTab] = useState<Tab>('analytics');
   const [students, setStudents] = useState<StudentSkills[]>([]);
   const [internships, setInternships] = useState<Internship[]>([]);
@@ -163,7 +161,7 @@ export function InstitutionDashboard() {
       supabase.from('student_skills').select('*'),
       supabase.from('profiles').select('*').eq('role', 'student'),
     ]);
-    setStudents((skillsData as StudentSkill[]) ?? []);
+    setStudents((skillsData as StudentSkills[]) ?? []);
     setProfiles((profilesData as Profile[]) ?? []);
 
     setImportResult(`Imported ${imported} student${imported !== 1 ? 's' : ''}.${skipped > 0 ? ` Skipped ${skipped} (already exist or invalid).` : ''} Default password: import123`);

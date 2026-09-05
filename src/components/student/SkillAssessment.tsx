@@ -46,7 +46,7 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
     setSubmitting(true);
     setError(null);
 
-    let { skills, gaps, totalScore } = computeSkillProfile(answers);
+    const { skills } = computeSkillProfile(answers);
 
     // Merge resume-extracted skills that aren't already in the assessment
     for (const rs of resumeSkills) {
@@ -54,8 +54,8 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
         skills.push(rs);
       }
     }
-    gaps = skills.filter((s) => s.score < 50).map((s) => s.skill);
-    totalScore = Math.round(skills.reduce((sum, s) => sum + s.score, 0) / skills.length);
+    const updatedGaps = skills.filter((s) => s.score < 50).map((s) => s.skill);
+    const updatedTotalScore = Math.round(skills.reduce((sum, s) => sum + s.score, 0) / skills.length);
 
     const { data: existing } = await supabase
       .from('student_skills')
@@ -68,8 +68,8 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
         .from('student_skills')
         .update({
           skills: skills as SkillEntry[],
-          gaps,
-          total_score: totalScore,
+          gaps: updatedGaps,
+          total_score: updatedTotalScore,
           updated_at: new Date().toISOString(),
         })
         .eq('student_id', profile.id);
@@ -80,8 +80,8 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
         .insert({
           student_id: profile.id,
           skills: skills as SkillEntry[],
-          gaps,
-          total_score: totalScore,
+          gaps: updatedGaps,
+          total_score: updatedTotalScore,
         });
       if (error) setError(error.message);
     }

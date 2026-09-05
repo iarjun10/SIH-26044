@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { createNotification } from '@/lib/notifications';
-import type { Internship, ApplicationWithDetails, StudentSkills, Profile, ApplicationStatus, InterviewSlot, IndustryFeedback, SkillRating } from '@/types';
-import { Plus, Building2, Users, TrendingUp, X, Loader2, MapPin, Clock, IndianRupee, Calendar, Star, MessageSquare, CheckCircle2 } from 'lucide-react';
+import type { Internship, ApplicationWithDetails, StudentSkills, ApplicationStatus, InterviewSlot, IndustryFeedback, SkillRating } from '@/types';
+import { Plus, Building2, Users, TrendingUp, X, Loader2, Calendar, Star, MessageSquare, CheckCircle2 } from 'lucide-react';
 
 export function IndustryDashboard() {
   const { profile } = useAuth();
