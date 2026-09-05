@@ -35,6 +35,16 @@ interface EvaluationResult {
   }>;
 }
 
+function notConfiguredResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: "AI service is not configured. Please set the GROQ_API_KEY secret in Supabase Edge Functions.",
+      code: "AI_NOT_CONFIGURED",
+    }),
+    { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -106,7 +116,12 @@ async function handleGenerate(body: GenerateBody, supabase: SupabaseClient): Pro
     );
   }
 
-  // Fetch student's existing skills and resume data for context
+  // Check AI configuration before proceeding
+  const apiKey = Deno.env.get("GROQ_API_KEY");
+  if (!apiKey) {
+    return notConfiguredResponse();
+  }
+
   const context = await gatherStudentContext(supabase, studentId);
 
   const result = await generateQuestions(skill, difficulty ?? "intermediate", questionType ?? "mcq", careerGoal, domain, context);
@@ -132,6 +147,12 @@ async function handleEvaluate(body: EvaluateBody, supabase: SupabaseClient): Pro
       JSON.stringify({ error: "Missing questions, userAnswers, or skill" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  }
+
+  // Check AI configuration before proceeding
+  const apiKey = Deno.env.get("GROQ_API_KEY");
+  if (!apiKey) {
+    return notConfiguredResponse();
   }
 
   const result = await evaluateAnswers(skill, difficulty ?? "intermediate", questionType ?? "mcq", questions, userAnswers);
@@ -206,50 +227,41 @@ async function gatherStudentContext(supabase: SupabaseClient, studentId: string)
   return context;
 }
 
-async function callAnthropic(prompt: string): Promise<string | null> {
-  const apiUrl = Deno.env.get("ANTHROPIC_BASE_URL") ?? "https://api.anthropic.com";
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  const customHeaders = Deno.env.get("ANTHROPIC_CUSTOM_HEADERS");
+async function callGroq(prompt: string): Promise<string | null> {
+  const apiUrl = "https://api.groq.com/openai/v1";
+  const apiKey = Deno.env.get("GROQ_API_KEY");
 
   if (!apiKey) {
-    console.error("No Anthropic API key configured");
     return null;
   }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "x-api-key": apiKey,
-    "anthropic-version": "2023-06-01",
+    "Authorization": `Bearer ${apiKey}`,
   };
 
-  if (customHeaders) {
-    const parts = customHeaders.split(":");
-    if (parts.length >= 2) {
-      headers[parts[0].trim()] = parts.slice(1).join(":").trim();
-    }
-  }
-
   try {
-    const response = await fetch(`${apiUrl}/v1/messages`, {
+    const response = await fetch(`${apiUrl}/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
+        model: "llama-3.3-70b-versatile",
         max_tokens: 4096,
         messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
       }),
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error("Anthropic API error:", response.status, errText);
+      console.error("Groq API error:", response.status, errText);
       return null;
     }
 
     const data = await response.json();
-    return data?.content?.[0]?.text ?? null;
+    return data?.choices?.[0]?.message?.content ?? null;
   } catch (err) {
-    console.error("Anthropic call failed:", err);
+    console.error("Groq call failed:", err);
     return null;
   }
 }
@@ -299,7 +311,7 @@ Rules:
 - Each question is worth 20 points (maxScore: 20), totaling 100.
 - Return ONLY the JSON.`;
 
-  const text = await callAnthropic(prompt);
+  const text = await callGroq(prompt);
   if (!text) return null;
 
   try {
@@ -365,7 +377,7 @@ Rules:
 - recommendations: 2-4 actionable suggestions for improvement.
 - Return ONLY the JSON.`;
 
-  const text = await callAnthropic(prompt);
+  const text = await callGroq(prompt);
   if (!text) return null;
 
   try {

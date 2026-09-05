@@ -91,6 +91,16 @@ Rules:
 - Normalize skill names to their canonical form (e.g., "React.js" -> "React", "Python programming" -> "Python").
 - Return ONLY the JSON, nothing else.`;
 
+function notConfiguredResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: "AI service is not configured. Please set the GROQ_API_KEY secret in Supabase Edge Functions.",
+      code: "AI_NOT_CONFIGURED",
+    }),
+    { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -134,7 +144,6 @@ Deno.serve(async (req: Request) => {
     } else if (fileExt === "txt" || fileExt === "md") {
       resumeText = await fileData.text();
     } else {
-      // For images and other formats, try to read as text
       try {
         resumeText = await fileData.text();
       } catch {
@@ -149,8 +158,13 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Call Anthropic API for structured extraction
-    const extraction = await callAnthropicForExtraction(resumeText);
+    // Check AI configuration before calling
+    const apiKey = Deno.env.get("GROQ_API_KEY");
+    if (!apiKey) {
+      return notConfiguredResponse();
+    }
+
+    const extraction = await callGroqForExtraction(resumeText);
 
     if (!extraction) {
       return new Response(
@@ -193,17 +207,14 @@ async function extractPdfText(fileData: Blob): Promise<string> {
     const bytes = new Uint8Array(arrayBuffer);
     let text = "";
 
-    // Simple PDF text extraction: extract text between BT/ET markers and Tj/TJ operators
     let rawStr = "";
     for (let i = 0; i < bytes.length; i++) {
       rawStr += String.fromCharCode(bytes[i]);
     }
 
-    // Extract text from PDF stream objects
     const textMatches = rawStr.match(/BT\s*(.*?)\s*ET/gs);
     if (textMatches) {
       for (const match of textMatches) {
-        // Extract text from Tj and TJ operators
         const tjMatches = match.match(/\((.*?)\)\s*Tj/g);
         if (tjMatches) {
           for (const tj of tjMatches) {
@@ -213,7 +224,6 @@ async function extractPdfText(fileData: Blob): Promise<string> {
             }
           }
         }
-        // Also handle array format TJ
         const tjArrayMatches = match.match(/\[(.*?)\]\s*TJ/g);
         if (tjArrayMatches) {
           for (const tj of tjArrayMatches) {
@@ -228,14 +238,11 @@ async function extractPdfText(fileData: Blob): Promise<string> {
       }
     }
 
-    // If we got text from PDF operators, clean it up
     if (text.trim().length > 20) {
       return text.replace(/[^\x20-\x7E\n]/g, " ").replace(/\s+/g, " ").trim();
     }
 
-    // Fallback: extract readable ASCII text sequences
     const asciiText = rawStr.replace(/[^\x20-\x7E\n]/g, " ");
-    // Filter to lines with mostly printable characters
     const lines = asciiText.split("\n").filter((l) => {
       const letters = l.replace(/[^a-zA-Z]/g, "").length;
       return letters > 2 && l.trim().length > 3;
@@ -247,33 +254,21 @@ async function extractPdfText(fileData: Blob): Promise<string> {
   }
 }
 
-async function callAnthropicForExtraction(resumeText: string): Promise<ResumeExtraction | null> {
-  const apiUrl = Deno.env.get("ANTHROPIC_BASE_URL") ?? "https://api.anthropic.com";
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  const customHeaders = Deno.env.get("ANTHROPIC_CUSTOM_HEADERS");
+async function callGroqForExtraction(resumeText: string): Promise<ResumeExtraction | null> {
+  const apiUrl = "https://api.groq.com/openai/v1";
+  const apiKey = Deno.env.get("GROQ_API_KEY");
 
   if (!apiKey) {
-    console.error("No Anthropic API key configured");
     return null;
   }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "x-api-key": apiKey,
-    "anthropic-version": "2023-06-01",
+    "Authorization": `Bearer ${apiKey}`,
   };
 
-  if (customHeaders) {
-    const parts = customHeaders.split(":");
-    if (parts.length >= 2) {
-      const key = parts[0].trim();
-      const value = parts.slice(1).join(":").trim();
-      headers[key] = value;
-    }
-  }
-
   const body = {
-    model: "claude-haiku-4-5-20251001",
+    model: "llama-3.3-70b-versatile",
     max_tokens: 4096,
     messages: [
       {
@@ -281,10 +276,11 @@ async function callAnthropicForExtraction(resumeText: string): Promise<ResumeExt
         content: `${EXTRACTION_PROMPT}\n\n--- RESUME TEXT ---\n${resumeText.substring(0, 40000)}`,
       },
     ],
+    response_format: { type: "json_object" },
   };
 
   try {
-    const response = await fetch(`${apiUrl}/v1/messages`, {
+    const response = await fetch(`${apiUrl}/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -292,19 +288,18 @@ async function callAnthropicForExtraction(resumeText: string): Promise<ResumeExt
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error("Anthropic API error:", response.status, errText);
+      console.error("Groq API error:", response.status, errText);
       return null;
     }
 
     const data = await response.json();
-    const textContent = data?.content?.[0]?.text;
+    const textContent = data?.choices?.[0]?.message?.content;
 
     if (!textContent) {
-      console.error("No text content in Anthropic response");
+      console.error("No text content in Groq response");
       return null;
     }
 
-    // Parse the JSON from the response, handling potential markdown fences
     const jsonStr = textContent
       .replace(/```json\s*/g, "")
       .replace(/```\s*/g, "")
@@ -313,7 +308,7 @@ async function callAnthropicForExtraction(resumeText: string): Promise<ResumeExt
     const parsed = JSON.parse(jsonStr);
     return parsed as ResumeExtraction;
   } catch (err) {
-    console.error("Anthropic call failed:", err);
+    console.error("Groq call failed:", err);
     return null;
   }
 }
