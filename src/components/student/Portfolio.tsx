@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import type { StudentSkills, ApplicationWithDetails, StatusHistory, Internship } from '@/types';
+import type { StudentSkills, ApplicationWithDetails, StatusHistory, InterviewSlot, VerifiedSkill } from '@/types';
+import { VerifiedSkillBadge } from '@/components/student/VerifiedSkillBadge';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer,
   Tooltip,
 } from 'recharts';
-import { Award, TrendingUp, AlertTriangle, Clock, CheckCircle2, XCircle, FileText } from 'lucide-react';
+import { Award, TrendingUp, AlertTriangle, Clock, CheckCircle2, XCircle, FileText, Calendar, MapPin, Video } from 'lucide-react';
 
 const statusConfig = {
   applied: { label: 'Applied', color: 'bg-blue-50 text-blue-700 border-blue-200', icon: <Clock className="w-3.5 h-3.5" /> },
@@ -20,6 +21,8 @@ export function Portfolio() {
   const [skills, setSkills] = useState<StudentSkills | null>(null);
   const [applications, setApplications] = useState<ApplicationWithDetails[]>([]);
   const [history, setHistory] = useState<Record<string, StatusHistory[]>>({});
+  const [interviewSlots, setInterviewSlots] = useState<Record<string, InterviewSlot[]>>({});
+  const [verifiedSkills, setVerifiedSkills] = useState<VerifiedSkill[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -34,32 +37,49 @@ export function Portfolio() {
 
       const { data: appsData } = await supabase
         .from('applications')
-        .select(`
-          *,
-          internship:internships(*)
-        `)
+        .select(`*, internship:internships(*)`)
         .eq('student_id', profile.id)
         .order('created_at', { ascending: false });
       setApplications((appsData as ApplicationWithDetails[]) ?? []);
 
+      const { data: verifiedData } = await supabase
+        .from('verified_skills')
+        .select('*')
+        .eq('student_id', profile.id);
+      setVerifiedSkills((verifiedData as VerifiedSkill[]) ?? []);
+
       if (appsData && appsData.length > 0) {
         const appIds = appsData.map((a) => a.id);
-        const { data: histData } = await supabase
-          .from('application_status_history')
-          .select('*')
-          .in('application_id', appIds)
-          .order('created_at', { ascending: true });
+        const [{ data: histData }, { data: slotData }] = await Promise.all([
+          supabase.from('application_status_history').select('*').in('application_id', appIds).order('created_at', { ascending: true }),
+          supabase.from('interview_slots').select('*').in('application_id', appIds).order('scheduled_time', { ascending: true }),
+        ]);
         const histMap: Record<string, StatusHistory[]> = {};
         (histData ?? []).forEach((h) => {
           if (!histMap[h.application_id]) histMap[h.application_id] = [];
           histMap[h.application_id].push(h as StatusHistory);
         });
         setHistory(histMap);
+
+        const slotMap: Record<string, InterviewSlot[]> = {};
+        (slotData ?? []).forEach((s) => {
+          if (!slotMap[s.application_id]) slotMap[s.application_id] = [];
+          slotMap[s.application_id].push(s as InterviewSlot);
+        });
+        setInterviewSlots(slotMap);
       }
 
       setLoading(false);
     })();
   }, [profile]);
+
+  const handleSelectSlot = async (slotId: string, appId: string) => {
+    await supabase.from('interview_slots').update({ selected: true }).eq('id', slotId);
+    await supabase.from('interview_slots').update({ selected: false }).neq('id', slotId).eq('application_id', appId);
+    // Refresh slots
+    const { data: slotData } = await supabase.from('interview_slots').select('*').eq('application_id', appId).order('scheduled_time', { ascending: true });
+    setInterviewSlots((prev) => ({ ...prev, [appId]: (slotData as InterviewSlot[]) ?? [] }));
+  };
 
   if (loading) {
     return (
@@ -100,20 +120,49 @@ export function Portfolio() {
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
             <h2 className="text-lg font-semibold text-slate-900 mb-3">Skill Details</h2>
             <div className="space-y-2.5">
-              {skills?.skills.map((s) => (
-                <div key={s.skill}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm text-slate-700">{s.skill}</span>
-                    <span className="text-sm font-medium text-slate-500">{s.score}</span>
+              {skills?.skills.map((s) => {
+                const verified = verifiedSkills.find((v) => v.skill.toLowerCase() === s.skill.toLowerCase());
+                return (
+                  <div key={s.skill}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm text-slate-700 flex items-center gap-1.5">
+                        {s.skill}
+                        {verified && (
+                          <span className="inline-flex items-center gap-0.5 text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded" title={`Verified: ${verified.verified_score}/100`}>
+                            <CheckCircle2 className="w-3 h-3" /> Verified
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-sm font-medium text-slate-500">{s.score}</span>
+                    </div>
+                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${s.score >= 70 ? 'bg-green-500' : s.score >= 50 ? 'bg-amber-400' : 'bg-red-400'}`}
+                        style={{ width: `${s.score}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${s.score >= 70 ? 'bg-green-500' : s.score >= 50 ? 'bg-amber-400' : 'bg-red-400'}`}
-                      style={{ width: `${s.score}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
+            </div>
+
+            {/* Verified skills section */}
+            <div className="mt-5 pt-4 border-t border-slate-100">
+              <h3 className="text-sm font-medium text-slate-700 mb-2">Verified Skill Badges</h3>
+              <div className="flex flex-wrap gap-2">
+                {skills?.skills.map((s) => (
+                  <VerifiedSkillBadge
+                    key={s.skill}
+                    skillName={s.skill}
+                    verifiedSkills={verifiedSkills}
+                    onVerified={async () => {
+                      if (!profile) return;
+                      const { data } = await supabase.from('verified_skills').select('*').eq('student_id', profile.id);
+                      setVerifiedSkills((data as VerifiedSkill[]) ?? []);
+                    }}
+                  />
+                ))}
+              </div>
             </div>
           </div>
 
@@ -132,7 +181,7 @@ export function Portfolio() {
           )}
         </div>
 
-        {/* Right: Applications + History */}
+        {/* Right: Applications + History + Interview Slots */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
             <h2 className="text-lg font-semibold text-slate-900 mb-4">Applications ({applications.length})</h2>
@@ -146,6 +195,8 @@ export function Portfolio() {
                 {applications.map((app) => {
                   const status = statusConfig[app.status];
                   const hist = history[app.id] ?? [];
+                  const slots = interviewSlots[app.id] ?? [];
+                  const hasSelectedSlot = slots.some((s) => s.selected);
                   return (
                     <div key={app.id} className="border border-slate-200 rounded-xl p-4 hover:shadow-sm transition-shadow">
                       <div className="flex items-start justify-between mb-3">
@@ -178,6 +229,42 @@ export function Portfolio() {
                           );
                         })}
                       </div>
+
+                      {/* Interview slots */}
+                      {slots.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Calendar className="w-4 h-4 text-amber-500" />
+                            <p className="text-xs font-medium text-slate-600">
+                              Interview Slots {hasSelectedSlot ? '(Selected)' : '(Pick one)'}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {slots.map((slot) => {
+                              const slotDate = new Date(slot.scheduled_time);
+                              return (
+                                <button
+                                  key={slot.id}
+                                  onClick={() => !slot.selected && handleSelectSlot(slot.id, app.id)}
+                                  disabled={slot.selected || hasSelectedSlot}
+                                  className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border-2 transition-all ${
+                                    slot.selected
+                                      ? 'border-green-500 bg-green-50 text-green-700'
+                                      : hasSelectedSlot
+                                        ? 'border-slate-100 text-slate-300 cursor-not-allowed'
+                                        : 'border-slate-200 text-slate-600 hover:border-amber-400 hover:bg-amber-50'
+                                  }`}
+                                >
+                                  <Video className="w-3 h-3" />
+                                  {slotDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} at{' '}
+                                  {slotDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                                  {slot.selected && <CheckCircle2 className="w-3 h-3" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Status history timeline */}
                       {hist.length > 0 && (

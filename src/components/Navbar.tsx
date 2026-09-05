@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { LogOut, GraduationCap, Building2, Landmark, User } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { UserRole } from '@/types';
+import { NotificationBell } from '@/components/NotificationBell';
 
 const roleConfig: Record<UserRole, { label: string; icon: ReactNode }> = {
   student: { label: 'Student', icon: <GraduationCap className="w-4 h-4" /> },
@@ -74,6 +75,7 @@ export function Navbar({ currentPage, onNavigate, navItems }: NavbarProps) {
               </div>
               <User className="w-4 h-4 text-slate-400 sm:hidden" />
             </div>
+            <NotificationBell onNavigate={onNavigate} />
             <button
               onClick={handleSignOut}
               className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"

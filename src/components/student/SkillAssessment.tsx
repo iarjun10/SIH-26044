@@ -2,8 +2,11 @@ import { useState } from 'react';
 import { assessmentQuestions, computeSkillProfile } from '@/data/assessment';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { ChevronLeft, ChevronRight, CheckCircle2, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, Loader2, FileText } from 'lucide-react';
 import type { SkillEntry } from '@/types';
+import { ResumeUpload } from '@/components/student/ResumeUpload';
+import { VerifiedSkillBadge } from '@/components/student/VerifiedSkillBadge';
+import type { VerifiedSkill } from '@/types';
 
 interface SkillAssessmentProps {
   onComplete: () => void;
@@ -15,6 +18,10 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resumeSkills, setResumeSkills] = useState<SkillEntry[]>([]);
+  const [verifiedSkills, setVerifiedSkills] = useState<VerifiedSkill[]>([]);
+  const [showResume, setShowResume] = useState(false);
+  const [showVerified, setShowVerified] = useState(false);
 
   const question = assessmentQuestions[currentQ];
   const totalQuestions = assessmentQuestions.length;
@@ -39,7 +46,16 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
     setSubmitting(true);
     setError(null);
 
-    const { skills, gaps, totalScore } = computeSkillProfile(answers);
+    let { skills, gaps, totalScore } = computeSkillProfile(answers);
+
+    // Merge resume-extracted skills that aren't already in the assessment
+    for (const rs of resumeSkills) {
+      if (!skills.some((s) => s.skill.toLowerCase() === rs.skill.toLowerCase())) {
+        skills.push(rs);
+      }
+    }
+    gaps = skills.filter((s) => s.score < 50).map((s) => s.skill);
+    totalScore = Math.round(skills.reduce((sum, s) => sum + s.score, 0) / skills.length);
 
     const { data: existing } = await supabase
       .from('student_skills')
@@ -74,6 +90,15 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
     if (!error) onComplete();
   };
 
+  const fetchVerifiedSkills = async () => {
+    if (!profile) return;
+    const { data } = await supabase
+      .from('verified_skills')
+      .select('*')
+      .eq('student_id', profile.id);
+    setVerifiedSkills((data as VerifiedSkill[]) ?? []);
+  };
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <div className="mb-8">
@@ -82,6 +107,56 @@ export function SkillAssessment({ onComplete }: SkillAssessmentProps) {
           Answer {totalQuestions} questions to build your skill profile. This helps us match you with the best internships.
         </p>
       </div>
+
+      {/* Resume upload + Verified skills toggles */}
+      <div className="flex gap-2 mb-6">
+        <button
+          onClick={() => setShowResume(!showResume)}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${showResume ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+        >
+          <FileText className="w-4 h-4" /> Upload Resume
+        </button>
+        <button
+          onClick={() => { setShowVerified(!showVerified); fetchVerifiedSkills(); }}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${showVerified ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+        >
+          <CheckCircle2 className="w-4 h-4" /> Verify Skills
+        </button>
+      </div>
+
+      {showResume && (
+        <div className="mb-6">
+          <ResumeUpload onSkillsExtracted={(skills) => setResumeSkills((prev) => {
+            const existing = new Set(prev.map((s) => s.skill.toLowerCase()));
+            const newOnes = skills.filter((s) => !existing.has(s.skill.toLowerCase()));
+            return [...prev, ...newOnes];
+          })} />
+          {resumeSkills.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {resumeSkills.map((s) => (
+                <span key={s.skill} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded-md">{s.skill} (from resume)</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showVerified && (
+        <div className="mb-6 bg-white border border-slate-200 rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-slate-900 mb-2">Verify Your Skills</h3>
+          <p className="text-xs text-slate-500 mb-3">Take a quick timed quiz to earn a verified badge. Verified skills stand out to employers.</p>
+          <div className="flex flex-wrap gap-2">
+            {assessmentQuestions.map((q) => (
+              <VerifiedSkillBadge
+                key={q.id}
+                skillName={q.skill}
+                verifiedSkills={verifiedSkills}
+                onVerified={fetchVerifiedSkills}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">

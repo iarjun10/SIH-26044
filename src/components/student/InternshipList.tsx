@@ -1,32 +1,41 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import type { StudentSkills, Internship, Application } from '@/types';
+import type { StudentSkills, Internship, Application, Bookmark } from '@/types';
 import { rankInternshipsByMatch } from '@/lib/match';
-import { Search, MapPin, Clock, IndianRupee, Check, Loader2, AlertCircle } from 'lucide-react';
+import { parseStipend, parseDurationMonths } from '@/lib/notifications';
+import { Search, MapPin, Clock, IndianRupee, Check, Loader2, AlertCircle, Bookmark, BookmarkCheck, Filter, X } from 'lucide-react';
 
 export function InternshipList() {
   const { profile } = useAuth();
   const [skills, setSkills] = useState<StudentSkills | null>(null);
   const [internships, setInternships] = useState<Internship[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
+  const [bookmarks, setBookmarks] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [skillFilter, setSkillFilter] = useState<string | null>(null);
+  const [locationFilter, setLocationFilter] = useState<string>('');
+  const [minStipend, setMinStipend] = useState<number>(0);
+  const [maxDuration, setMaxDuration] = useState<number>(0);
+  const [showBookmarkedOnly, setShowBookmarkedOnly] = useState(false);
   const [applying, setApplying] = useState<string | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     if (!profile) return;
     (async () => {
-      const [{ data: skillsData }, { data: internshipsData }, { data: appsData }] = await Promise.all([
+      const [{ data: skillsData }, { data: internshipsData }, { data: appsData }, { data: bookmarkData }] = await Promise.all([
         supabase.from('student_skills').select('*').eq('student_id', profile.id).maybeSingle(),
-        supabase.from('internships').select('*').order('created_at', { ascending: false }),
+        supabase.from('internships').select('*').eq('status', 'approved').order('created_at', { ascending: false }),
         supabase.from('applications').select('*').eq('student_id', profile.id),
+        supabase.from('bookmarks').select('*').eq('student_id', profile.id),
       ]);
       setSkills(skillsData as StudentSkills | null);
       setInternships(internshipsData ?? []);
       setApplications(appsData ?? []);
+      setBookmarks(new Set((bookmarkData as Bookmark[])?.map((b) => b.internship_id) ?? []));
       setLoading(false);
     })();
   }, [profile]);
@@ -42,15 +51,28 @@ export function InternshipList() {
     return Array.from(set).sort();
   }, [internships]);
 
+  const allLocations = useMemo(() => {
+    const set = new Set<string>();
+    internships.forEach((i) => set.add(i.location));
+    return Array.from(set).sort();
+  }, [internships]);
+
   const filtered = useMemo(() => {
     return rankedInternships.filter((i) => {
       const matchesSearch = !searchQuery ||
         i.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        i.description.toLowerCase().includes(searchQuery.toLowerCase());
+        i.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        i.required_skills.some((s) => s.toLowerCase().includes(searchQuery.toLowerCase()));
       const matchesSkill = !skillFilter || i.required_skills.includes(skillFilter);
-      return matchesSearch && matchesSkill;
+      const matchesLocation = !locationFilter || i.location === locationFilter;
+      const stipendVal = parseStipend(i.stipend);
+      const matchesStipend = minStipend === 0 || stipendVal >= minStipend;
+      const durationMonths = parseDurationMonths(i.duration);
+      const matchesDuration = maxDuration === 0 || durationMonths <= maxDuration;
+      const matchesBookmark = !showBookmarkedOnly || bookmarks.has(i.id);
+      return matchesSearch && matchesSkill && matchesLocation && matchesStipend && matchesDuration && matchesBookmark;
     });
-  }, [rankedInternships, searchQuery, skillFilter]);
+  }, [rankedInternships, searchQuery, skillFilter, locationFilter, minStipend, maxDuration, showBookmarkedOnly, bookmarks]);
 
   const appliedIds = new Set(applications.map((a) => a.internship_id));
 
@@ -80,6 +102,27 @@ export function InternshipList() {
     setApplying(null);
   };
 
+  const handleBookmark = async (internshipId: string) => {
+    if (!profile) return;
+    if (bookmarks.has(internshipId)) {
+      await supabase.from('bookmarks').delete().eq('student_id', profile.id).eq('internship_id', internshipId);
+      setBookmarks((prev) => { const next = new Set(prev); next.delete(internshipId); return next; });
+    } else {
+      await supabase.from('bookmarks').insert({ student_id: profile.id, internship_id: internshipId });
+      setBookmarks((prev) => new Set(prev).add(internshipId));
+    }
+  };
+
+  const clearFilters = () => {
+    setSkillFilter(null);
+    setLocationFilter('');
+    setMinStipend(0);
+    setMaxDuration(0);
+    setShowBookmarkedOnly(false);
+  };
+
+  const activeFilterCount = (skillFilter ? 1 : 0) + (locationFilter ? 1 : 0) + (minStipend > 0 ? 1 : 0) + (maxDuration > 0 ? 1 : 0) + (showBookmarkedOnly ? 1 : 0);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -105,29 +148,72 @@ export function InternshipList() {
         <p className="text-slate-500 text-sm mt-1">Sorted by your skill match percentage</p>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+      {/* Search + filter toggle */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by title or keyword..."
+            placeholder="Search by title, keyword, or skill..."
             className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
           />
         </div>
-        <select
-          value={skillFilter ?? ''}
-          onChange={(e) => setSkillFilter(e.target.value || null)}
-          className="px-4 py-2.5 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm bg-white"
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors ${showFilters || activeFilterCount > 0 ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
         >
-          <option value="">All Skills</option>
-          {allSkills.map((skill) => (
-            <option key={skill} value={skill}>{skill}</option>
-          ))}
-        </select>
+          <Filter className="w-4 h-4" /> Filters
+          {activeFilterCount > 0 && <span className="text-xs bg-blue-600 text-white rounded-full px-1.5 py-0.5">{activeFilterCount}</span>}
+        </button>
       </div>
+
+      {/* Expanded filters */}
+      {showFilters && (
+        <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Skill</label>
+            <select value={skillFilter ?? ''} onChange={(e) => setSkillFilter(e.target.value || null)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white outline-none focus:border-blue-500">
+              <option value="">All Skills</option>
+              {allSkills.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Location</label>
+            <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white outline-none focus:border-blue-500">
+              <option value="">All Locations</option>
+              {allLocations.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Min Stipend (₹/month)</label>
+            <input type="number" value={minStipend || ''} onChange={(e) => setMinStipend(parseInt(e.target.value) || 0)}
+              placeholder="Any"
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:border-blue-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Max Duration (months)</label>
+            <input type="number" value={maxDuration || ''} onChange={(e) => setMaxDuration(parseInt(e.target.value) || 0)}
+              placeholder="Any"
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:border-blue-500" />
+          </div>
+          <div className="flex items-center gap-3 sm:col-span-2 lg:col-span-4">
+            <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={showBookmarkedOnly} onChange={(e) => setShowBookmarkedOnly(e.target.checked)}
+                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+              <BookmarkCheck className="w-4 h-4 text-blue-600" /> Saved only
+            </label>
+            {activeFilterCount > 0 && (
+              <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-500">
+                <X className="w-3 h-3" /> Clear filters
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {applyError && (
         <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-600">
@@ -143,17 +229,23 @@ export function InternshipList() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filtered.map((internship) => {
             const isApplied = appliedIds.has(internship.id);
+            const isBookmarked = bookmarks.has(internship.id);
             return (
               <div key={internship.id} className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col hover:shadow-md transition-shadow">
                 <div className="flex items-start justify-between mb-3">
                   <h3 className="text-base font-semibold text-slate-900">{internship.title}</h3>
-                  <span className={`text-sm font-bold px-2.5 py-1 rounded-full flex-shrink-0 ${
-                    internship.matchScore >= 70 ? 'bg-green-50 text-green-700' :
-                    internship.matchScore >= 40 ? 'bg-amber-50 text-amber-700' :
-                    'bg-red-50 text-red-700'
-                  }`}>
-                    {internship.matchScore}% match
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button onClick={() => handleBookmark(internship.id)} className="p-1 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title={isBookmarked ? 'Remove bookmark' : 'Save for later'}>
+                      {isBookmarked ? <BookmarkCheck className="w-4 h-4 text-blue-600" /> : <Bookmark className="w-4 h-4" />}
+                    </button>
+                    <span className={`text-sm font-bold px-2.5 py-1 rounded-full ${
+                      internship.matchScore >= 70 ? 'bg-green-50 text-green-700' :
+                      internship.matchScore >= 40 ? 'bg-amber-50 text-amber-700' :
+                      'bg-red-50 text-red-700'
+                    }`}>
+                      {internship.matchScore}% match
+                    </span>
+                  </div>
                 </div>
 
                 <p className="text-sm text-slate-500 line-clamp-2 mb-4">{internship.description}</p>
